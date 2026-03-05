@@ -72,31 +72,50 @@ func (c *Client) Generate(ctx context.Context, model, prompt string) (io.ReadClo
 
 // StreamTokens reads NDJSON tokens from r, calling onToken for each partial token.
 // Returns the complete assembled message.
+//
+// We use bufio.Reader.ReadBytes instead of bufio.Scanner because Scanner has a
+// hard 64 KB max token size. ReadBytes grows its internal buffer on demand, so
+// it handles arbitrarily large NDJSON lines — important for large multi-file diffs
+// where the model may produce long output in a single streaming chunk.
 func StreamTokens(r io.Reader, onToken func(string)) (string, error) {
-	scanner := bufio.NewScanner(r)
+	reader := bufio.NewReader(r)
 	var sb strings.Builder
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+
+	for {
+		// ReadBytes reads until '\n', growing its buffer as needed — no size limit.
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			// Trim the trailing newline before unmarshalling.
+			line = []byte(strings.TrimRight(string(line), "\n\r"))
+			if len(line) == 0 {
+				if err != nil {
+					break
+				}
+				continue
+			}
+
+			var resp generateResponse
+			if jsonErr := json.Unmarshal(line, &resp); jsonErr != nil {
+				return "", fmt.Errorf("parse error: %w", jsonErr)
+			}
+			if resp.Error != "" {
+				return "", fmt.Errorf("ollama: %s", resp.Error)
+			}
+			if resp.Response != "" {
+				onToken(resp.Response)
+				sb.WriteString(resp.Response)
+			}
+			if resp.Done {
+				break
+			}
 		}
-		var resp generateResponse
-		if err := json.Unmarshal(line, &resp); err != nil {
-			return "", fmt.Errorf("parse error: %w", err)
-		}
-		if resp.Error != "" {
-			return "", fmt.Errorf("ollama: %s", resp.Error)
-		}
-		if resp.Response != "" {
-			onToken(resp.Response)
-			sb.WriteString(resp.Response)
-		}
-		if resp.Done {
+		if err == io.EOF {
 			break
 		}
+		if err != nil {
+			return "", err
+		}
 	}
-	if err := scanner.Err(); err != nil {
-		return "", err
-	}
+
 	return strings.TrimSpace(sb.String()), nil
 }

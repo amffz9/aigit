@@ -2,6 +2,7 @@ package ollama_test
 
 import (
 	"aigit/ollama"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +26,23 @@ func TestStreamTokens_basic(t *testing.T) {
 	}
 	if len(tokens) != 2 {
 		t.Errorf("got %d tokens want 2", len(tokens))
+	}
+}
+
+func TestStreamTokens_largeResponse(t *testing.T) {
+	// Simulate a model that sends a single large chunk exceeding bufio.Scanner's
+	// default 64 KB max token size. This reproduces the "token too long" error
+	// that occurs with large multi-file diffs.
+	largeToken := strings.Repeat("a", 70_000) // 70 KB — safely over the 64 KB limit
+	line, _ := json.Marshal(map[string]any{"response": largeToken, "done": false})
+	ndjson := string(line) + "\n" + "{\"response\":\"\",\"done\":true}\n"
+
+	msg, err := ollama.StreamTokens(strings.NewReader(ndjson), func(string) {})
+	if err != nil {
+		t.Fatalf("unexpected error (likely bufio token too long): %v", err)
+	}
+	if msg != largeToken {
+		t.Errorf("response length mismatch: got %d bytes, want %d bytes", len(msg), len(largeToken))
 	}
 }
 
