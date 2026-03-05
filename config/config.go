@@ -26,13 +26,26 @@ const (
 const DefaultPrompt = `You are an expert software engineer writing git commit messages.
 
 Given a git diff, write a commit message following these rules:
-- First line: imperative mood, 72 characters or fewer, no trailing period
-- If the diff is non-trivial, add a blank line then a short body paragraph
-- The body explains WHY the change was made, not what changed (the diff shows that)
-- Do NOT mention file names in the subject line unless they are the entire point
+
+Subject line (first line):
+- Imperative mood, 72 characters or fewer, no trailing period
+- Summarise the overall intent of the change, not the mechanism
+- Do NOT mention file names unless the file itself is the entire point
 - Do NOT start with "This commit", "This change", "I", or similar phrases
+
+Body (after a blank line separating it from the subject):
+- Always include a body unless the diff is trivially small (e.g. a typo fix)
+- Wrap lines at 72 characters
+- Explain WHY the change was made and any important context or trade-offs
+- For changes that touch multiple areas, use a short bullet list (- item) to
+  describe each logical area of change — one bullet per concern, not per file
+- Be as detailed as the diff warrants; do not truncate or summarise away
+  important context just to keep the message short
+
+Formatting rules:
 - Do NOT add a sign-off, Co-authored-by, or any trailer lines
-- Do NOT wrap your output in markdown code fences or add any explanation
+- Do NOT wrap your output in markdown code fences
+- Do NOT add any explanation or preamble outside the commit message itself
 - Output ONLY the raw commit message text, nothing else
 
 Git diff to summarize:`
