@@ -13,7 +13,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Model != "qwen3:4b" {
+	if cfg.Model != "auto" {
 		t.Errorf("default model: got %q", cfg.Model)
 	}
 	if cfg.URL != "http://localhost:11434" {

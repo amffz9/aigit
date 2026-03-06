@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -24,6 +25,15 @@ type generateResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type listModelsResponse struct {
+	Models []modelInfo `json:"models"`
+}
+
+type modelInfo struct {
+	Name  string `json:"name"`
+	Model string `json:"model"`
+}
+
 // Generator is the interface for commit message generation.
 type Generator interface {
 	Generate(ctx context.Context, model, prompt string) (io.ReadCloser, error)
@@ -37,8 +47,21 @@ type Client struct {
 
 func NewClient(baseURL string) *Client {
 	return &Client{
-		BaseURL:    strings.TrimRight(baseURL, "/"),
-		HTTPClient: &http.Client{Timeout: 120 * time.Second},
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		// Avoid a hard end-to-end timeout for streaming generation; requests are
+		// canceled via context (e.g. Ctrl-C) instead.
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{
+				Proxy:                 http.ProxyFromEnvironment,
+				DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				ResponseHeaderTimeout: 30 * time.Second,
+			},
+		},
 	}
 }
 
@@ -68,6 +91,59 @@ func (c *Client) Generate(ctx context.Context, model, prompt string) (io.ReadClo
 		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, body)
 	}
 	return resp.Body, nil
+}
+
+// CurrentModel returns the best model choice for "auto" mode:
+//  1. first currently loaded model from /api/ps
+//  2. first installed model from /api/tags
+func (c *Client) CurrentModel(ctx context.Context) (string, error) {
+	var running listModelsResponse
+	if err := c.getJSON(ctx, c.BaseURL+"/api/ps", &running); err == nil {
+		if model := firstModelName(running.Models); model != "" {
+			return model, nil
+		}
+	}
+
+	var installed listModelsResponse
+	if err := c.getJSON(ctx, c.BaseURL+"/api/tags", &installed); err != nil {
+		return "", err
+	}
+	if model := firstModelName(installed.Models); model != "" {
+		return model, nil
+	}
+	return "", fmt.Errorf("no Ollama models found; run `ollama pull <model>` or pass --model")
+}
+
+func (c *Client) getJSON(ctx context.Context, url string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("ollama unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ollama returned %d: %s", resp.StatusCode, body)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("parse error: %w", err)
+	}
+	return nil
+}
+
+func firstModelName(models []modelInfo) string {
+	for _, m := range models {
+		if m.Name != "" {
+			return m.Name
+		}
+		if m.Model != "" {
+			return m.Model
+		}
+	}
+	return ""
 }
 
 // StreamTokens reads NDJSON tokens from r, calling onToken for each partial token.

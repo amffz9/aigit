@@ -5,7 +5,7 @@
 //  1. CLI flags (--model, --url)
 //  2. Environment variables (AIGIT_MODEL, AIGIT_URL, AIGIT_PROMPT)
 //  3. Config file (~/.config/aigit/config.json, or a custom path)
-//  4. Built-in defaults (model: qwen3:4b, url: http://localhost:11434)
+//  4. Built-in defaults (model: auto, url: http://localhost:11434)
 package config
 
 import (
@@ -16,7 +16,7 @@ import (
 
 // Default values used when no override is provided.
 const (
-	DefaultModel = "qwen3:4b"
+	DefaultModel = "auto"
 	DefaultURL   = "http://localhost:11434"
 )
 
@@ -59,7 +59,7 @@ type Overrides struct {
 
 // Config is the fully resolved configuration ready for use by the CLI.
 type Config struct {
-	Model  string // Ollama model name (e.g. "qwen3:4b")
+	Model  string // Ollama model name (or "auto" to resolve from Ollama)
 	URL    string // Ollama base URL (e.g. "http://localhost:11434")
 	Prompt string // System prompt prepended to the git diff
 }

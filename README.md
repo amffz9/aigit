@@ -26,7 +26,7 @@ feat(auth): add JWT validation middleware
 |---|---|
 | Go | 1.22 or later |
 | Ollama | any recent version |
-| A running Ollama model | default: `qwen3:4b` |
+| A running or installed Ollama model | default: auto-select |
 
 No external Go dependencies — stdlib only.
 
@@ -86,7 +86,7 @@ aigit [flags] [files...]
 | `--dir <path>` | Stage all changes under `<path>` (relative to CWD) |
 | `--all` / `-a` | Stage all tracked modified files (`git add -u`) |
 | `--dry-run` | Print the generated message but do not commit |
-| `--model <model>` | Ollama model to use (overrides config) |
+| `--model <model>` | Ollama model to use (overrides config; `auto` picks loaded/default) |
 | `--url <url>` | Ollama base URL (overrides config) |
 | `[files...]` | Stage these specific files, then generate |
 
@@ -129,7 +129,7 @@ Settings are resolved in priority order (highest first):
 1. **CLI flags** (`--model`, `--url`)
 2. **Environment variables** (`AIGIT_MODEL`, `AIGIT_URL`, `AIGIT_PROMPT`)
 3. **Config file** (`~/.config/aigit/config.json`)
-4. **Defaults** (model: `qwen3:4b`, url: `http://localhost:11434`)
+4. **Defaults** (model: `auto`, url: `http://localhost:11434`)
 
 ### Config file
 
@@ -149,7 +149,7 @@ All fields are optional. Omitted fields fall back to the defaults or env vars.
 
 | Variable | Description |
 |---|---|
-| `AIGIT_MODEL` | Ollama model name |
+| `AIGIT_MODEL` | Ollama model name (or `auto`) |
 | `AIGIT_URL` | Ollama base URL |
 | `AIGIT_PROMPT` | Full system prompt (replaces the built-in prompt) |
 

@@ -75,8 +75,13 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	defer stopSignalHandler()
 
 	client := ollama.NewClient(cfg.URL)
+	model, err := resolveModel(ctx, client, cfg.Model, cw)
+	if err != nil {
+		fmt.Fprintf(stderr, "aigit: %v\n", err)
+		return 1
+	}
 
-	return runGenerateLoop(ctx, client, cfg.Model, prompt, flags.dryRun, repoRoot, stdin, stdout, stderr, cw)
+	return runGenerateLoop(ctx, client, model, prompt, flags.dryRun, repoRoot, stdin, stdout, stderr, cw)
 }
 
 // cliFlags holds the parsed command-line flags.
@@ -256,6 +261,20 @@ func generateAndStream(
 	})
 	fmt.Fprintln(stdout) // ensure the cursor moves to a new line after streaming
 	return msg, err
+}
+
+func resolveModel(ctx context.Context, client *ollama.Client, configured string, cw *ui.ColorWriter) (string, error) {
+	model := strings.TrimSpace(configured)
+	if model != "" && !strings.EqualFold(model, "auto") {
+		return model, nil
+	}
+
+	resolved, err := client.CurrentModel(ctx)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve Ollama model automatically: %w", err)
+	}
+	cw.Printf("%s %s\n", cw.Cyan("Using model:"), resolved)
+	return resolved, nil
 }
 
 // commitWithMessage runs git commit -m with the provided message and prints a

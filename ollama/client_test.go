@@ -80,3 +80,49 @@ func TestClient_Generate(t *testing.T) {
 		t.Errorf("got %q want %q", msg, "hello")
 	}
 }
+
+func TestClient_CurrentModel_prefersRunning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ps":
+			w.Write([]byte(`{"models":[{"name":"llama3.2:latest"}]}`))
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"qwen3:4b"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := ollama.NewClient(srv.URL)
+	model, err := client.CurrentModel(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model != "llama3.2:latest" {
+		t.Errorf("got %q want %q", model, "llama3.2:latest")
+	}
+}
+
+func TestClient_CurrentModel_fallsBackToInstalled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ps":
+			w.Write([]byte(`{"models":[]}`))
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"qwen3:4b"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := ollama.NewClient(srv.URL)
+	model, err := client.CurrentModel(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model != "qwen3:4b" {
+		t.Errorf("got %q want %q", model, "qwen3:4b")
+	}
+}
