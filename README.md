@@ -1,8 +1,9 @@
 # aigit
 
 `aigit` generates git commit messages from your staged diff using a local
-[Ollama](https://ollama.com) instance. It streams the message token-by-token
-and then lets you commit, edit, retry, or abort — all from the terminal.
+LLM provider. It prefers [Ollama](https://ollama.com) by default, falls back
+to [LM Studio](https://lmstudio.ai) when Ollama is not detected, and then lets
+you commit, edit, retry, or abort — all from the terminal.
 
 ```
 $ aigit --dir src/auth
@@ -25,8 +26,8 @@ feat(auth): add JWT validation middleware
 | Requirement | Version |
 |---|---|
 | Go | 1.22 or later |
-| Ollama | any recent version |
-| A running or installed Ollama model | default: auto-select |
+| Ollama or LM Studio | any recent version |
+| A running local model | default: auto-select first listed model |
 
 No external Go dependencies — stdlib only.
 
@@ -47,7 +48,7 @@ mv aigit /usr/local/bin/
 
 ## Quick Start
 
-1. **Start Ollama** with your chosen model:
+1. **Start your local provider** with a chosen model:
    ```bash
    ollama run qwen3:4b
    ```
@@ -80,16 +81,15 @@ aigit [flags] [files...]
 | `--all` / `-a` | Stage tracked and untracked changes (`git add -A`) |
 | `--dry-run` | Print the generated message but do not commit |
 | `--config <path>` | Read config from a custom JSON file path |
-| `--model <model>` | Ollama model to use (overrides config; `auto` picks loaded/default) |
-| `--url <url>` | Ollama base URL (overrides config) |
+| `--provider <provider>` | Provider to use: `auto`, `ollama`, or `lmstudio` |
+| `--model <model>` | Model to use (overrides config; `auto` picks the provider default/first listed model) |
+| `--url <url>` | Provider base URL (overrides config) |
 | `[files...]` | Stage these specific files, then generate |
 
-Reasoning-capable Ollama models such as `nemotron-3-nano:4b` are supported,
-and `aigit` lets them think while suppressing the reasoning text from the
-terminal and the final commit message. If hidden reasoning is detected, the UI
-prints a brief `Thinking...` status and strips any leaked `<think>...</think>`
-content before displaying or committing the final message. Use a recent Ollama
-release that supports the `think` request field for the best results.
+Ollama reasoning-capable models are supported, and `aigit` suppresses hidden
+reasoning text from the terminal and the final commit message. If the selected
+provider is unreachable, `aigit` checks whether Ollama or LM Studio appears to
+be installed locally and prints a more specific setup hint.
 
 ### Examples
 
@@ -113,7 +113,10 @@ aigit --dry-run
 # Use a different model for this run
 aigit --model llama3.2
 
-# Override the Ollama URL
+# Force LM Studio for this run
+aigit --provider lmstudio
+
+# Override the provider URL
 aigit --url http://192.168.1.10:11434
 
 # Run from a subdirectory — paths are always relative to CWD
@@ -127,10 +130,10 @@ aigit --dir .
 
 Settings are resolved in priority order (highest first):
 
-1. **CLI flags** (`--config`, `--model`, `--url`)
-2. **Environment variables** (`AIGIT_MODEL`, `AIGIT_URL`, `AIGIT_PROMPT`)
+1. **CLI flags** (`--config`, `--provider`, `--model`, `--url`)
+2. **Environment variables** (`AIGIT_PROVIDER`, `AIGIT_MODEL`, `AIGIT_URL`, `AIGIT_PROMPT`)
 3. **Config file** (`--config <path>` or `~/.config/aigit/config.json`)
-4. **Defaults** (model: `auto`, url: `http://localhost:11434`)
+4. **Defaults** (provider: `auto`, model: `auto`)
 
 ### Config file
 
@@ -138,6 +141,7 @@ Create `~/.config/aigit/config.json`:
 
 ```json
 {
+  "provider": "auto",
   "model": "llama3.2",
   "url": "http://localhost:11434",
   "prompt": "Optional custom system prompt..."
@@ -150,9 +154,15 @@ All fields are optional. Omitted fields fall back to the defaults or env vars.
 
 | Variable | Description |
 |---|---|
-| `AIGIT_MODEL` | Ollama model name (or `auto`) |
-| `AIGIT_URL` | Ollama base URL |
+| `AIGIT_PROVIDER` | Provider name: `auto`, `ollama`, or `lmstudio` |
+| `AIGIT_MODEL` | Provider model name (or `auto`) |
+| `AIGIT_URL` | Provider base URL |
 | `AIGIT_PROMPT` | Custom prompt content; `aigit` still wraps the diff with its safety preamble |
+
+When `provider` is `auto` and no custom URL is set, `aigit` prefers Ollama if
+it is installed, otherwise it uses LM Studio if detected. If both are
+installed and Ollama is unavailable at runtime, `aigit` retries once with
+LM Studio automatically.
 
 ### NO_COLOR
 
