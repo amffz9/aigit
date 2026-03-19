@@ -46,6 +46,7 @@ Formatting rules:
 - Do NOT add a sign-off, Co-authored-by, or any trailer lines
 - Do NOT wrap your output in markdown code fences
 - Do NOT add any explanation or preamble outside the commit message itself
+- Do NOT output reasoning traces, thinking tags, or hidden scratch work
 - Output ONLY the raw commit message text, nothing else
 
 Git diff to summarize:`

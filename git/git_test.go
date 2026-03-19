@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -132,6 +133,64 @@ func TestCommit(t *testing.T) {
 	out, _ := exec.Command("git", "-C", dir, "log", "--oneline").Output()
 	if !contains(string(out), "feat: add foo") {
 		t.Errorf("commit message not found in log: %s", out)
+	}
+}
+
+func TestStagedFileStatuses(t *testing.T) {
+	dir := initRepo(t)
+
+	// Create initial commit so we can test modify/delete/rename
+	writeFile(t, dir, "existing.go", "package main\n")
+	writeFile(t, dir, "toremove.go", "package rm\n")
+	writeFile(t, dir, "torename.go", "package mv\n")
+	mustRun(t, dir, "git", "add", ".")
+	mustRun(t, dir, "git", "commit", "-m", "init")
+
+	// Added file
+	writeFile(t, dir, "new.go", "package new\n")
+	mustRun(t, dir, "git", "add", "new.go")
+
+	// Modified file
+	writeFile(t, dir, "existing.go", "package main\n// changed\n")
+	mustRun(t, dir, "git", "add", "existing.go")
+
+	// Deleted file
+	os.Remove(filepath.Join(dir, "toremove.go"))
+	mustRun(t, dir, "git", "add", "toremove.go")
+
+	// Renamed file
+	mustRun(t, dir, "git", "mv", "torename.go", "renamed.go")
+
+	statuses, err := git.StagedFileStatuses(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := make(map[string]string) // path -> status
+	for _, s := range statuses {
+		got[s.Path] = s.Status
+	}
+
+	if got["existing.go"] != "M" {
+		t.Errorf("existing.go: want M, got %q", got["existing.go"])
+	}
+	if got["new.go"] != "A" {
+		t.Errorf("new.go: want A, got %q", got["new.go"])
+	}
+	if got["toremove.go"] != "D" {
+		t.Errorf("toremove.go: want D, got %q", got["toremove.go"])
+	}
+
+	// Rename path should be "torename.go → renamed.go"
+	var foundRename bool
+	for _, s := range statuses {
+		if s.Status == "R" && strings.Contains(s.Path, "torename.go") && strings.Contains(s.Path, "renamed.go") {
+			foundRename = true
+			break
+		}
+	}
+	if !foundRename {
+		t.Errorf("expected rename entry for torename.go → renamed.go, got %v", statuses)
 	}
 }
 

@@ -17,10 +17,12 @@ type generateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
 	Stream bool   `json:"stream"`
+	Think  *bool  `json:"think,omitempty"`
 }
 
 type generateResponse struct {
 	Response string `json:"response"`
+	Thinking string `json:"thinking"`
 	Done     bool   `json:"done"`
 	Error    string `json:"error,omitempty"`
 }
@@ -59,17 +61,18 @@ func NewClient(baseURL string) *Client {
 				IdleConnTimeout:       90 * time.Second,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
-				ResponseHeaderTimeout: 30 * time.Second,
 			},
 		},
 	}
 }
 
 func (c *Client) Generate(ctx context.Context, model, prompt string) (io.ReadCloser, error) {
+	think := true
 	reqBody := generateRequest{
 		Model:  model,
 		Prompt: prompt,
 		Stream: true,
+		Think:  &think,
 	}
 	data, err := json.Marshal(reqBody)
 	if err != nil {
@@ -146,16 +149,21 @@ func firstModelName(models []modelInfo) string {
 	return ""
 }
 
-// StreamTokens reads NDJSON tokens from r, calling onToken for each partial token.
-// Returns the complete assembled message.
+// StreamTokens reads NDJSON tokens from r.
+//
+// Hidden reasoning is allowed to stream from Ollama, but never forwarded to
+// onToken or included in the returned message. onThinking is called whenever
+// hidden reasoning activity is detected so the caller can surface a lightweight
+// status indicator without exposing the reasoning text itself.
 //
 // We use bufio.Reader.ReadBytes instead of bufio.Scanner because Scanner has a
 // hard 64 KB max token size. ReadBytes grows its internal buffer on demand, so
 // it handles arbitrarily large NDJSON lines — important for large multi-file diffs
 // where the model may produce long output in a single streaming chunk.
-func StreamTokens(r io.Reader, onToken func(string)) (string, error) {
+func StreamTokens(r io.Reader, onToken func(string), onThinking func()) (string, error) {
 	reader := bufio.NewReader(r)
 	var sb strings.Builder
+	filter := newReasoningFilter()
 
 	for {
 		// ReadBytes reads until '\n', growing its buffer as needed — no size limit.
@@ -177,9 +185,18 @@ func StreamTokens(r io.Reader, onToken func(string)) (string, error) {
 			if resp.Error != "" {
 				return "", fmt.Errorf("ollama: %s", resp.Error)
 			}
+			if resp.Thinking != "" && onThinking != nil {
+				onThinking()
+			}
 			if resp.Response != "" {
-				onToken(resp.Response)
-				sb.WriteString(resp.Response)
+				visible, thought := filter.Write(resp.Response)
+				if thought && onThinking != nil {
+					onThinking()
+				}
+				if visible != "" {
+					onToken(visible)
+					sb.WriteString(visible)
+				}
 			}
 			if resp.Done {
 				break
@@ -193,5 +210,88 @@ func StreamTokens(r io.Reader, onToken func(string)) (string, error) {
 		}
 	}
 
+	if tail := filter.Flush(); tail != "" {
+		onToken(tail)
+		sb.WriteString(tail)
+	}
+
 	return strings.TrimSpace(sb.String()), nil
+}
+
+type reasoningFilter struct {
+	inThink bool
+	pending string
+}
+
+func newReasoningFilter() *reasoningFilter {
+	return &reasoningFilter{}
+}
+
+func (f *reasoningFilter) Write(chunk string) (string, bool) {
+	const openTag = "<think>"
+	const closeTag = "</think>"
+
+	data := f.pending + chunk
+	f.pending = ""
+
+	var out strings.Builder
+	sawThinking := false
+
+	for len(data) > 0 {
+		if f.inThink {
+			sawThinking = true
+			idx := strings.Index(data, closeTag)
+			if idx == -1 {
+				f.pending = trailingTagPrefix(data, closeTag)
+				return sanitizeVisibleText(out.String()), sawThinking
+			}
+			data = data[idx+len(closeTag):]
+			f.inThink = false
+			continue
+		}
+
+		idx := strings.Index(data, openTag)
+		if idx == -1 {
+			f.pending = trailingTagPrefix(data, openTag)
+			out.WriteString(data[:len(data)-len(f.pending)])
+			return sanitizeVisibleText(out.String()), sawThinking
+		}
+
+		out.WriteString(data[:idx])
+		data = data[idx+len(openTag):]
+		f.inThink = true
+		sawThinking = true
+	}
+
+	return sanitizeVisibleText(out.String()), sawThinking
+}
+
+func (f *reasoningFilter) Flush() string {
+	if f.inThink {
+		f.pending = ""
+		return ""
+	}
+	tail := f.pending
+	f.pending = ""
+	return tail
+}
+
+func trailingTagPrefix(data, tag string) string {
+	maxPrefix := len(tag) - 1
+	if len(data) < maxPrefix {
+		maxPrefix = len(data)
+	}
+
+	for n := maxPrefix; n > 0; n-- {
+		if strings.HasSuffix(data, tag[:n]) {
+			return data[len(data)-n:]
+		}
+	}
+	return ""
+}
+
+func sanitizeVisibleText(s string) string {
+	s = strings.ReplaceAll(s, "<think>", "")
+	s = strings.ReplaceAll(s, "</think>", "")
+	return s
 }

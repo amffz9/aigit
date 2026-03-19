@@ -8,12 +8,16 @@
 package ui
 
 import (
+	"aigit/git"
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // Choice represents the user's selection from the interactive prompt.
@@ -52,6 +56,9 @@ func (c *ColorWriter) colorize(code, s string) string {
 	return fmt.Sprintf("\033[%sm%s\033[0m", code, s)
 }
 
+// Red returns s formatted in red.
+func (c *ColorWriter) Red(s string) string { return c.colorize("31", s) }
+
 // Green returns s formatted in green.
 func (c *ColorWriter) Green(s string) string { return c.colorize("32", s) }
 
@@ -74,12 +81,26 @@ func (c *ColorWriter) Println(s string) {
 	fmt.Fprintln(c.w, s)
 }
 
-// PrintStagedFiles prints the list of staged files with a bold header and
-// green "+" prefix for each entry.
-func PrintStagedFiles(cw *ColorWriter, files []string) {
+// PrintStagedFiles prints the list of staged files with status indicators.
+// Added files show a green +, modified a yellow ~, deleted a red -, renamed
+// a cyan →, and unknown statuses a white ?.
+func PrintStagedFiles(cw *ColorWriter, files []git.FileStatus) {
 	cw.Println(cw.Bold("Staged files:"))
 	for _, f := range files {
-		cw.Printf("  %s %s\n", cw.Green("+"), f)
+		var indicator string
+		switch f.Status {
+		case "A":
+			indicator = cw.Green("+")
+		case "M":
+			indicator = cw.Yellow("~")
+		case "D":
+			indicator = cw.Red("-")
+		case "R":
+			indicator = cw.Cyan("→")
+		default:
+			indicator = "?"
+		}
+		cw.Printf("  %s %s\n", indicator, f.Path)
 	}
 	cw.Println("")
 }
@@ -113,7 +134,7 @@ func PromptUser(in io.Reader, out io.Writer) (Choice, error) {
 // WriteTempMessage writes msg to a new temporary file and returns its path.
 // The caller is responsible for removing the file with os.Remove when done.
 func WriteTempMessage(msg string) (string, error) {
-	f, err := os.CreateTemp("", "aigit-*.txt")
+	f, err := os.CreateTemp("", "aigit-*.gitcommit")
 	if err != nil {
 		return "", err
 	}
@@ -123,17 +144,14 @@ func WriteTempMessage(msg string) (string, error) {
 }
 
 // OpenEditor opens the file at path in the user's preferred editor.
-// The editor is taken from $EDITOR; if unset, vi is used as a fallback.
+// The editor is taken from $VISUAL, then $EDITOR; if neither is set, vi is used.
 // The editor process inherits the current stdin/stdout/stderr so the user
 // gets a full interactive terminal session.
 func OpenEditor(path string) error {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
+	parts, err := editorCommandParts()
+	if err != nil {
+		return err
 	}
-
-	// $EDITOR may contain flags (e.g. "code --wait"), so split on whitespace.
-	parts := strings.Fields(editor)
 	args := append(parts[1:], path)
 
 	cmd := newEditorCmd(parts[0], args...)
@@ -141,6 +159,103 @@ func OpenEditor(path string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func editorCommandParts() ([]string, error) {
+	editor := strings.TrimSpace(os.Getenv("VISUAL"))
+	if editor == "" {
+		editor = strings.TrimSpace(os.Getenv("EDITOR"))
+	}
+	if editor == "" {
+		return []string{"vi"}, nil
+	}
+
+	parts, err := splitCommandLine(editor)
+	if err != nil {
+		return nil, fmt.Errorf("invalid editor command: %w", err)
+	}
+	if len(parts) == 0 {
+		return []string{"vi"}, nil
+	}
+	if strings.TrimSpace(parts[0]) == "" || filepath.Base(parts[0]) == "." {
+		return nil, errors.New("empty editor executable")
+	}
+	return parts, nil
+}
+
+func splitCommandLine(s string) ([]string, error) {
+	var (
+		args        []string
+		current     strings.Builder
+		inSingle    bool
+		inDouble    bool
+		escaping    bool
+		tokenActive bool
+	)
+
+	flush := func() {
+		if tokenActive {
+			args = append(args, current.String())
+			current.Reset()
+			tokenActive = false
+		}
+	}
+
+	for _, r := range s {
+		switch {
+		case escaping:
+			current.WriteRune(r)
+			tokenActive = true
+			escaping = false
+
+		case inSingle:
+			if r == '\'' {
+				inSingle = false
+				continue
+			}
+			current.WriteRune(r)
+			tokenActive = true
+
+		case inDouble:
+			switch r {
+			case '"':
+				inDouble = false
+			case '\\':
+				escaping = true
+			default:
+				current.WriteRune(r)
+				tokenActive = true
+			}
+
+		default:
+			switch {
+			case unicode.IsSpace(r):
+				flush()
+			case r == '\'':
+				inSingle = true
+				tokenActive = true
+			case r == '"':
+				inDouble = true
+				tokenActive = true
+			case r == '\\':
+				escaping = true
+				tokenActive = true
+			default:
+				current.WriteRune(r)
+				tokenActive = true
+			}
+		}
+	}
+
+	if escaping {
+		return nil, errors.New("unterminated escape")
+	}
+	if inSingle || inDouble {
+		return nil, errors.New("unterminated quote")
+	}
+
+	flush()
+	return args, nil
 }
 
 // newEditorCmd constructs the exec.Cmd for the editor. It is a variable so

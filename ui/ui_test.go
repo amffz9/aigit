@@ -1,6 +1,7 @@
 package ui_test
 
 import (
+	"aigit/git"
 	"aigit/ui"
 	"bytes"
 	"strings"
@@ -39,6 +40,38 @@ func TestPromptUser_invalid_then_valid(t *testing.T) {
 	choice, err := ui.PromptUser(strings.NewReader("x\nz\nc\n"), &bytes.Buffer{})
 	if err != nil || choice != ui.ChoiceCommit {
 		t.Errorf("got %v %v, want ChoiceCommit after invalid inputs", choice, err)
+	}
+}
+
+func TestPrintStagedFiles(t *testing.T) {
+	var buf bytes.Buffer
+	cw := ui.NewColorWriter(&buf, false) // no color for easy assertions
+
+	files := []git.FileStatus{
+		{Status: "A", Path: "new.go"},
+		{Status: "M", Path: "changed.go"},
+		{Status: "D", Path: "removed.go"},
+		{Status: "R", Path: "old.go → new.go"},
+		{Status: "C", Path: "copied.go"},
+	}
+	ui.PrintStagedFiles(cw, files)
+	out := buf.String()
+
+	expects := []struct {
+		indicator string
+		path      string
+	}{
+		{"+", "new.go"},
+		{"~", "changed.go"},
+		{"-", "removed.go"},
+		{"→", "old.go → new.go"},
+		{"?", "copied.go"},
+	}
+	for _, e := range expects {
+		want := e.indicator + " " + e.path
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q, got:\n%s", want, out)
+		}
 	}
 }
 
