@@ -34,20 +34,13 @@ No external Go dependencies — stdlib only.
 
 ## Installation
 
+From a local checkout of this repository:
+
 ```bash
-# Clone and build
-git clone https://github.com/yourname/aigit
-cd aigit
 go build -ldflags="-s -w" -o aigit .
 
 # Move the binary somewhere on your PATH
 mv aigit /usr/local/bin/
-```
-
-Or with `go install`:
-
-```bash
-go install aigit@latest
 ```
 
 ---
@@ -84,11 +77,19 @@ aigit [flags] [files...]
 | Flag | Description |
 |---|---|
 | `--dir <path>` | Stage all changes under `<path>` (relative to CWD) |
-| `--all` / `-a` | Stage all tracked modified files (`git add -u`) |
+| `--all` / `-a` | Stage tracked and untracked changes (`git add -A`) |
 | `--dry-run` | Print the generated message but do not commit |
+| `--config <path>` | Read config from a custom JSON file path |
 | `--model <model>` | Ollama model to use (overrides config; `auto` picks loaded/default) |
 | `--url <url>` | Ollama base URL (overrides config) |
 | `[files...]` | Stage these specific files, then generate |
+
+Reasoning-capable Ollama models such as `nemotron-3-nano:4b` are supported,
+and `aigit` lets them think while suppressing the reasoning text from the
+terminal and the final commit message. If hidden reasoning is detected, the UI
+prints a brief `Thinking...` status and strips any leaked `<think>...</think>`
+content before displaying or committing the final message. Use a recent Ollama
+release that supports the `think` request field for the best results.
 
 ### Examples
 
@@ -102,7 +103,7 @@ aigit --dir src/
 # Stage specific files
 aigit src/auth.go src/middleware.go
 
-# Stage everything modified and tracked
+# Stage everything, including untracked files
 aigit --all
 aigit -a
 
@@ -126,9 +127,9 @@ aigit --dir .
 
 Settings are resolved in priority order (highest first):
 
-1. **CLI flags** (`--model`, `--url`)
+1. **CLI flags** (`--config`, `--model`, `--url`)
 2. **Environment variables** (`AIGIT_MODEL`, `AIGIT_URL`, `AIGIT_PROMPT`)
-3. **Config file** (`~/.config/aigit/config.json`)
+3. **Config file** (`--config <path>` or `~/.config/aigit/config.json`)
 4. **Defaults** (model: `auto`, url: `http://localhost:11434`)
 
 ### Config file
@@ -151,7 +152,7 @@ All fields are optional. Omitted fields fall back to the defaults or env vars.
 |---|---|
 | `AIGIT_MODEL` | Ollama model name (or `auto`) |
 | `AIGIT_URL` | Ollama base URL |
-| `AIGIT_PROMPT` | Full system prompt (replaces the built-in prompt) |
+| `AIGIT_PROMPT` | Custom prompt content; `aigit` still wraps the diff with its safety preamble |
 
 ### NO_COLOR
 
@@ -194,7 +195,9 @@ aigit auth.go utils.go # stages these two files
 ## Large diffs
 
 If your staged diff exceeds 50 KB, `aigit` prints a warning and continues.
-Very large diffs can reduce generation quality. Consider narrowing the scope:
+If it exceeds 200 KB, `aigit` aborts before contacting Ollama so you can
+narrow the scope first. Very large diffs can reduce generation quality.
+Consider narrowing the scope:
 
 ```bash
 aigit --dir src/specific-package/
